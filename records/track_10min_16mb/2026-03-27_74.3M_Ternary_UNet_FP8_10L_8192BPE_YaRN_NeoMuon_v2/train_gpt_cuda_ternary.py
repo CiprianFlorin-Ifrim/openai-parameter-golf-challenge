@@ -104,6 +104,7 @@ class Hyperparameters:
     sliding_eval_stride = _e("SLIDING_EVAL_STRIDE", 64, int)
     sliding_batch_size = _e("SLIDING_BATCH_SIZE", 64, int)
     temp_scaling = _e("TEMP_SCALING", 0, bool)
+    temp_calib   = _e("TEMP_CALIB", 0.0, float)   # 0 = grid-search, >0 = use this temperature directly
     _fp_raw = os.environ.get("FP_STORAGE", "0")
     fp_storage = True if _fp_raw == "FP8" else ("fp4" if _fp_raw == "FP4" else False)
     checkpoint_every = _e("CHECKPOINT_EVERY", 0, int)   # 0 = disabled
@@ -1523,13 +1524,18 @@ def main() -> None:
     if args.temp_scaling:
         torch.cuda.synchronize()
         t_temp = time.perf_counter()
-        calibration_tokens = train_loader.stream.take(65536).to(device)
-        opt_temp = find_temp(args, base_model, rank, world_size, device, grad_accum_steps,
-                                            calibration_tokens, base_bytes_lut, has_leading_space_lut,
-                                            is_boundary_token_lut)
+        if args.temp_calib > 0:
+            opt_temp = args.temp_calib
+        else:
+            calibration_tokens = train_loader.stream.take(65536).to(device)
+            opt_temp = find_temp(args, base_model, rank, world_size, device, grad_accum_steps,
+                                                calibration_tokens, base_bytes_lut, has_leading_space_lut,
+                                                is_boundary_token_lut)
         torch.cuda.synchronize()
         temp_time_ms = 1000.0 * (time.perf_counter() - t_temp)
-        log0(f"temp_scaling optimal_T:{opt_temp:.2f} eval_time:{temp_time_ms:.0f}ms")
+        log0(f"temp_scaling optimal_T:{opt_temp:.2f} "
+             f"{'(manual)' if args.temp_calib > 0 else '(auto)'} "
+             f"eval_time:{temp_time_ms:.0f}ms")
 
     if args.sliding_eval:
         torch.cuda.synchronize()
